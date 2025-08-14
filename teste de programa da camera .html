@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Desenho com as Mãos — Webcam + MediaPipe (Robusto)</title>
+  <style>
+    :root { --bg:#0b1220; --card:#121a2b; --txt:#e6eefc; --acc:#4da3ff; --ok:#16a34a; --warn:#f59e0b; --err:#ef4444; }
+    * { box-sizing: border-box; }
+    body{ margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial; background:linear-gradient(180deg,#0a1120,#0d1426); color:var(--txt); padding:16px; }
+    h1{ margin:0 0 12px; font-size:clamp(18px,2.6vw,26px); font-weight:700; }
+    .wrap{ max-width:1080px; margin:0 auto; display:grid; gap:12px; }
+    .panel{ background:var(--card); border:1px solid #1f2a44; border-radius:14px; padding:12px; box-shadow:0 10px 30px rgba(0,0,0,.35); }
+    .controls{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    .controls > * { background:#0f1830; border:1px solid #25335a; color:var(--txt); padding:8px 10px; border-radius:12px; font-size:14px; }
+    button{ cursor:pointer; }
+    button.primary{ background:var(--acc); color:#06101f; border-color:#3b8ce0; font-weight:700; }
+    .status{ margin-left:auto; padding:6px 10px; opacity:.95; border-radius:10px; }
+    .status.ok{ background:#0d2816; border:1px solid #1f7a36; }
+    .status.warn{ background:#2b2103; border:1px solid #a56a07; }
+    .status.err{ background:#2b0a0a; border:1px solid #a83a3a; }
+    .hint{ font-size:13px; opacity:.9 }
+    .stage{ position:relative; width:100%; aspect-ratio:4/3; overflow:hidden; border-radius:14px; background:#0b0f1c; border:1px solid #1a2642; }
+    video{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transform:scaleX(-1); opacity:.45; filter:saturate(0.9) contrast(1.1) brightness(0.95); }
+    canvas{ position:absolute; inset:0; width:100%; height:100%; }
+    #overlay{ pointer-events:none; }
+    footer{ opacity:.75; font-size:12px; text-align:center; margin-top:6px }
+    .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    label{ font-size:13px; opacity:.95 }
+    input[type="range"]{ width:140px; }
+    .grid{ display:grid; grid-template-columns:1fr; gap:12px; }
+    @media (min-width: 920px){ .grid{ grid-template-columns: 2fr 1fr; } }
+    .badge{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid #30406b; background:#0f1830; }
+    .kv{ display:grid; grid-template-columns: 1fr auto; gap:6px; }
+    .kv div{ background:#0f1830; border:1px solid #25335a; border-radius:10px; padding:8px 10px; font-size:13px; }
+    details summary{ cursor:pointer; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel">
+      <h1>Desenhe com as mãos ✋🎨 (Webcam + MediaPipe) — Versão com tratamento de permissões</h1>
+      <p class="hint">Requer <b>HTTPS</b> ou <b>http://localhost</b>. Clique em <b>Iniciar Câmera</b>, una <b>polegar</b> e <b>indicador</b> (“pinça”) para <b>desenhar</b>. Separe para parar.</p>
+      <div class="controls">
+        <button id="startBtn" class="primary">Iniciar Câmera</button>
+        <button id="stopBtn">Parar Câmera</button>
+        <div class="row">
+          <label>Cor: <input id="color" type="color" value="#00e0ff"></label>
+          <label>Espessura: <input id="thickness" type="range" min="1" max="16" step="1" value="5"></label>
+          <label><input id="smooth" type="checkbox" checked> Suavização</label>
+        </div>
+        <button id="clearBtn">Limpar</button>
+        <button id="saveBtn">Salvar PNG</button>
+        <span id="status" class="status warn">Aguardando…</span>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="panel stage">
+        <video id="video" playsinline muted></video>
+        <canvas id="overlay"></canvas>
+        <canvas id="draw"></canvas>
+      </div>
+
+      <div class="panel">
+        <h3 style="margin-top:6px">Diagnóstico & Testes</h3>
+        <div class="kv">
+          <div>Contexto seguro (HTTPS/localhost)</div><div id="diagSecure" class="badge">–</div>
+          <div>Suporte a câmera (mediaDevices)</div><div id="diagMedia" class="badge">–</div>
+          <div>Permissão da câmera</div><div id="diagPerm" class="badge">–</div>
+        </div>
+        <div style="margin-top:10px">
+          <button id="chkBtn">Checar permissões</button>
+          <button id="retryBtn">Tentar novamente</button>
+        </div>
+        <details style="margin-top:10px">
+          <summary>Ajuda se der <code>NotAllowedError: Permission denied</code></summary>
+          <ol class="hint">
+            <li>Abra em <b>HTTPS</b> ou <b>http://localhost</b> (não funciona em <code>file://</code>).</li>
+            <li>Quando solicitado, clique em <b>Permitir</b> uso da câmera.</li>
+            <li>Se já negou antes, clique no ícone de câmera da barra de endereço e mude para <b>Permitir</b>.</li>
+            <li>Windows: <i>Configurações → Privacidade e segurança → Câmera</i>; habilite para os navegadores.</li>
+            <li>Feche apps que estejam usando a webcam (Teams/Zoom/Meet).</li>
+          </ol>
+        </details>
+        <hr style="border-color:#223; opacity:.5"/>
+        <div id="testResults" class="hint">Executando testes…</div>
+      </div>
+    </div>
+
+    <footer>Privacidade: todo o processamento ocorre no seu navegador. Nenhum dado é enviado para servidores.</footer>
+  </div>
+
+  <!-- MediaPipe (CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+  <script>
+  (function(){
+    'use strict';
+
+    // ---- Elementos
+    const video = document.getElementById('video');
+    const overlay = document.getElementById('overlay');
+    const draw = document.getElementById('draw');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const colorInput = document.getElementById('color');
+    const thicknessInput = document.getElementById('thickness');
+    const smoothChk = document.getElementById('smooth');
+    const clearBtn = document.getElementById('clearBtn');
+    const saveBtn = document.getElementById('saveBtn');
+    const statusEl = document.getElementById('status');
+    const diagSecure = document.getElementById('diagSecure');
+    const diagMedia  = document.getElementById('diagMedia');
+    const diagPerm   = document.getElementById('diagPerm');
+    const chkBtn     = document.getElementById('chkBtn');
+    const retryBtn   = document.getElementById('retryBtn');
+
+    // ---- Estado
+    let stream = null, hands = null, animId = null;
+    let ctxOverlay = overlay.getContext('2d');
+    let ctxDraw = draw.getContext('2d');
+
+    let drawing = false;
+    const PINCH_START = 0.05;
+    const PINCH_END   = 0.07;
+
+    let lastX = null, lastY = null, lastT = 0, fpsAvg = 0;
+    const SMOOTH_ALPHA = 0.35;
+
+    // ---- Utils
+    function setStatus(msg, type='warn'){ statusEl.textContent = msg; statusEl.className = 'status ' + type; }
+    function badge(el, text, color){ el.textContent = text; el.style.borderColor = color; el.style.color = color; }
+    function fitCanvases() {
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const rect = video.getBoundingClientRect();
+      [overlay, draw].forEach(cv=>{
+        cv.width  = Math.round(rect.width  * dpr);
+        cv.height = Math.round(rect.height * dpr);
+        cv.style.width  = rect.width + 'px';
+        cv.style.height = rect.height + 'px';
+      });
+      ctxOverlay = overlay.getContext('2d');
+      ctxDraw = draw.getContext('2d');
+      ctxOverlay.setTransform(dpr,0,0,dpr,0,0);
+      ctxDraw.setTransform(dpr,0,0,dpr,0,0);
+      ctxDraw.lineCap = 'round';
+      ctxDraw.lineJoin = 'round';
+    }
+    function dist(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy); }
+    function toCanvasXY(lm, cv){ return { x:(1-lm.x)*cv.width, y: lm.y*cv.height }; }
+    function drawLine(x1,y1,x2,y2){ ctxDraw.strokeStyle=colorInput.value; ctxDraw.lineWidth=+thicknessInput.value; ctxDraw.beginPath(); ctxDraw.moveTo(x1,y1); ctxDraw.lineTo(x2,y2); ctxDraw.stroke(); }
+    function clearDrawing(){ ctxDraw.clearRect(0,0,draw.width, draw.height); }
+    function savePNG(){ const tmp=document.createElement('canvas'); const dpr=Math.max(1,window.devicePixelRatio||1); tmp.width=draw.width/dpr; tmp.height=draw.height/dpr; tmp.getContext('2d').drawImage(draw,0,0,tmp.width,tmp.height); const a=document.createElement('a'); a.href=tmp.toDataURL('image/png'); a.download='desenho_maos.png'; a.click(); }
+    function stopStream(){ if(stream){ stream.getTracks().forEach(t=>{try{t.stop()}catch{}}); stream=null; } if(animId){ cancelAnimationFrame(animId); animId=null; } if(hands && hands.close){ try{ hands.close(); }catch{} hands=null; } setStatus('Câmera parada.','warn'); }
+
+    async function queryPermission(){
+      if(!('permissions' in navigator)) return {supported:false, state:'indisponível'};
+      try{ const st = await navigator.permissions.query({ name:'camera' }); return {supported:true, state:st.state}; }
+      catch{ return {supported:false, state:'desconhecido'}; }
+    }
+    function updateDiagnostics(perm){
+      const secure = (location.protocol==='https:' || location.hostname==='localhost' || location.hostname==='127.0.0.1');
+      const media  = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+      badge(diagSecure, secure?'OK':'NÃO', secure?'#16a34a':'#ef4444');
+      badge(diagMedia,  media ?'OK':'NÃO', media ?'#16a34a':'#ef4444');
+      if(perm){ const map={granted:['Concedida','#16a34a'], denied:['Negada','#ef4444'], prompt:['Pendente','#f59e0b']}; const [txt,col]=map[perm.state]||['Desconhecida','#f59e0b']; badge(diagPerm,txt,col); }
+      startBtn.disabled = !secure || !media;
+      startBtn.title = (!secure? 'Requer HTTPS/localhost. ' : '') + (!media? 'Navegador sem mediaDevices.' : '');
+    }
+
+    async function start(){
+      const secure = (location.protocol==='https:' || location.hostname==='localhost' || location.hostname==='127.0.0.1');
+      if(!secure){ setStatus('Requer HTTPS ou http://localhost para acessar a câmera.','err'); return; }
+      if(!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)){ setStatus('Navegador sem getUserMedia. Use Chrome/Edge/Firefox atualizados.','err'); return; }
+
+      fitCanvases();
+      window.addEventListener('resize', fitCanvases, {passive:true});
+
+      hands = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+      hands.setOptions({ maxNumHands:1, modelComplexity:1, minDetectionConfidence:0.7, minTrackingConfidence:0.7 });
+      hands.onResults(onResults);
+
+      try{
+        stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user', width:{ideal:1280}, height:{ideal:720} }, audio:false });
+        video.srcObject = stream;
+        await video.play();
+        setStatus('Câmera iniciada. Faça pinça (polegar+indicador) para desenhar.','ok');
+        loop();
+      }catch(err){
+        let msg = 'Falha ao acessar a câmera.';
+        switch(err && err.name){
+          case 'NotAllowedError':
+          case 'SecurityError': msg='Permissão negada. Habilite a câmera no ícone da barra de endereço e tente novamente.'; break;
+          case 'NotFoundError': msg='Nenhuma câmera foi encontrada neste dispositivo.'; break;
+          case 'NotReadableError': msg='A câmera está em uso por outro aplicativo. Feche Teams/Zoom/Meet e tente de novo.'; break;
+          case 'OverconstrainedError': msg='Não foi possível satisfazer as restrições de vídeo (resolução/dispositivo).'; break;
+        }
+        setStatus(`${msg} (${err && err.name ? err.name : 'erro'})`,'err');
+        queryPermission().then(updateDiagnostics);
+      }
+    }
+
+    function loop(){ animId = requestAnimationFrame(loop); if(!hands || !video.videoWidth) return; try{ hands.send({ image: video }); }catch{} }
+
+    function onResults(results){
+      const now=performance.now(), dt=(now-lastT)||16.7; lastT=now; const fps=1000/dt; fpsAvg=fpsAvg?(fpsAvg*0.9+fps*0.1):fps;
+      ctxOverlay.clearRect(0,0,overlay.width, overlay.height);
+      if(!results.multiHandLandmarks || results.multiHandLandmarks.length===0){ setStatus(`Sem mão detectada — ${fpsAvg|0} fps`,'warn'); drawing=false; lastX=lastY=null; return; }
+      const lm = results.multiHandLandmarks[0];
+      try{ window.drawConnectors && window.drawConnectors(ctxOverlay,lm,window.HAND_CONNECTIONS,{color:'#2dd4bf',lineWidth:2}); window.drawLandmarks && window.drawLandmarks(ctxOverlay,lm,{color:'#22d3ee',lineWidth:1}); }catch{}
+      const tipIndex=lm[8], tipThumb=lm[4], pinch=dist(tipIndex,tipThumb);
+      if(!drawing && pinch < 0.05){ drawing=true; const p0=toCanvasXY(tipIndex,draw); lastX=p0.x; lastY=p0.y; }
+      else if(drawing && pinch > 0.07){ drawing=false; lastX=lastY=null; }
+      const p=toCanvasXY(tipIndex,draw);
+      if(smoothChk.checked && lastX!=null && lastY!=null){ p.x=lastX+(p.x-lastX)*0.35; p.y=lastY+(p.y-lastY)*0.35; }
+      if(drawing){ if(lastX!=null && lastY!=null) drawLine(lastX,lastY,p.x,p.y); lastX=p.x; lastY=p.y; setStatus(`Desenhando (pinça) — ${fpsAvg|0} fps`,'ok'); }
+      else{ setStatus(`Aponte e faça pinça para desenhar — ${fpsAvg|0} fps`,'warn'); }
+    }
+
+    // Eventos
+    startBtn.addEventListener('click', start);
+    stopBtn.addEventListener('click', stopStream);
+    clearBtn.addEventListener('click', clearDrawing);
+    saveBtn.addEventListener('click', savePNG);
+    chkBtn.addEventListener('click', () => queryPermission().then(updateDiagnostics));
+    retryBtn.addEventListener('click', start);
+    window.addEventListener('beforeunload', stopStream);
+
+    // Diagnóstico inicial
+    queryPermission().then(updateDiagnostics);
+
+    // ---- Testes embutidos (sem câmera) ----
+    function runTests(){
+      const out=[], approx=(a,b,eps=1e-6)=>Math.abs(a-b)<=eps;
+      // T1: distância 3-4-5
+      const d=dist({x:0,y:0},{x:3,y:4}); out.push((approx(d,5)?'✅':'❌')+` dist(0,0)-(3,4)=${d} (exp. 5)`);
+      // T2: toCanvasXY (espelho)
+      draw.width=100; draw.height=50; const p=toCanvasXY({x:0.2,y:0.3},draw); out.push((p.x===80&&p.y===15?'✅':'❌')+` toCanvasXY(0.2,0.3)=(${p.x},${p.y}) (exp. 80,15)`);
+      // T3: histerese
+      let state=false; function step(v){ if(!state&&v<0.05) state=true; else if(state&&v>0.07) state=false; return state; }
+      const seq=[0.08,0.06,0.04,0.05,0.06,0.08], states=seq.map(step), exp=[false,false,true,true,false,false];
+      const pass=states.every((v,i)=>v===exp[i]); out.push((pass?'✅':'❌')+` histerese seq => ${JSON.stringify(states)} (exp. ${JSON.stringify(exp)})`);
+      // T4: detecção contexto seguro
+      const secure=(location.protocol==='https:'||location.hostname==='localhost'||location.hostname==='127.0.0.1');
+      out.push(((secure||location.protocol==='file:')?'✅':'❌')+` detecção de contexto seguro executada`);
+      document.getElementById('testResults').innerHTML = out.map(l=>`<div>${l}</div>`).join('');
+    }
+    runTests();
+  })();
+  </script>
+</body>
+</html>
