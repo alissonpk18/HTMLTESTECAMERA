@@ -123,8 +123,8 @@
     let ctxDraw = draw.getContext('2d');
 
     let drawing = false;
-    const PINCH_START = 0.05;
-    const PINCH_END   = 0.07;
+    const PINCH_START = 0.07; // distância (em proporcional ao quadro) para iniciar o desenho
+    const PINCH_END   = 0.09; // distância para encerrar o desenho
 
     let lastX = null, lastY = null, lastT = 0, fpsAvg = 0;
     const SMOOTH_ALPHA = 0.35;
@@ -209,14 +209,26 @@
       ctxOverlay.clearRect(0,0,overlay.width, overlay.height);
       if(!results.multiHandLandmarks || results.multiHandLandmarks.length===0){ setStatus(`Sem mão detectada — ${fpsAvg|0} fps`,'warn'); drawing=false; lastX=lastY=null; return; }
       const lm = results.multiHandLandmarks[0];
+      // desenha caixa delimitadora para mostrar onde a mão foi reconhecida
+      const pts = lm.map(pt => toCanvasXY(pt, overlay));
+      const xs = pts.map(p=>p.x), ys = pts.map(p=>p.y);
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      const minY = Math.min(...ys), maxY = Math.max(...ys);
+      ctxOverlay.strokeStyle = '#4da3ff';
+      ctxOverlay.lineWidth = 2;
+      ctxOverlay.strokeRect(minX, minY, maxX-minX, maxY-minY);
       try{ window.drawConnectors && window.drawConnectors(ctxOverlay,lm,window.HAND_CONNECTIONS,{color:'#2dd4bf',lineWidth:2}); window.drawLandmarks && window.drawLandmarks(ctxOverlay,lm,{color:'#22d3ee',lineWidth:1}); }catch{}
       const tipIndex=lm[8], tipThumb=lm[4], pinch=dist(tipIndex,tipThumb);
-      if(!drawing && pinch < 0.05){ drawing=true; const p0=toCanvasXY(tipIndex,draw); lastX=p0.x; lastY=p0.y; }
-      else if(drawing && pinch > 0.07){ drawing=false; lastX=lastY=null; }
+      if(!drawing && pinch < PINCH_START){ drawing=true; const p0=toCanvasXY(tipIndex,draw); lastX=p0.x; lastY=p0.y; }
+      else if(drawing && pinch > PINCH_END){ drawing=false; lastX=lastY=null; }
       const p=toCanvasXY(tipIndex,draw);
       if(smoothChk.checked && lastX!=null && lastY!=null){ p.x=lastX+(p.x-lastX)*0.35; p.y=lastY+(p.y-lastY)*0.35; }
+      ctxOverlay.beginPath();
+      ctxOverlay.arc(p.x, p.y, 8, 0, Math.PI*2);
+      ctxOverlay.fillStyle = drawing ? '#4da3ff' : '#f59e0b';
+      ctxOverlay.fill();
       if(drawing){ if(lastX!=null && lastY!=null) drawLine(lastX,lastY,p.x,p.y); lastX=p.x; lastY=p.y; setStatus(`Desenhando (pinça) — ${fpsAvg|0} fps`,'ok'); }
-      else{ setStatus(`Aponte e faça pinça para desenhar — ${fpsAvg|0} fps`,'warn'); }
+      else{ setStatus(`Mão detectada. Faça pinça para desenhar — ${fpsAvg|0} fps`,'ok'); }
     }
 
     // Eventos
@@ -239,8 +251,8 @@
       // T2: toCanvasXY (espelho)
       draw.width=100; draw.height=50; const p=toCanvasXY({x:0.2,y:0.3},draw); out.push((p.x===80&&p.y===15?'✅':'❌')+` toCanvasXY(0.2,0.3)=(${p.x},${p.y}) (exp. 80,15)`);
       // T3: histerese
-      let state=false; function step(v){ if(!state&&v<0.05) state=true; else if(state&&v>0.07) state=false; return state; }
-      const seq=[0.08,0.06,0.04,0.05,0.06,0.08], states=seq.map(step), exp=[false,false,true,true,false,false];
+      let state=false; function step(v){ if(!state&&v<PINCH_START) state=true; else if(state&&v>PINCH_END) state=false; return state; }
+      const seq=[0.10,0.08,0.06,0.07,0.08,0.10], states=seq.map(step), exp=[false,false,true,true,true,false];
       const pass=states.every((v,i)=>v===exp[i]); out.push((pass?'✅':'❌')+` histerese seq => ${JSON.stringify(states)} (exp. ${JSON.stringify(exp)})`);
       // T4: detecção contexto seguro
       const secure=(location.protocol==='https:'||location.hostname==='localhost'||location.hostname==='127.0.0.1');
